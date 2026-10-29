@@ -54,6 +54,7 @@ import java.io.IOException
 import java.text.DateFormat
 import java.util.Date
 import java.util.UUID
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.concurrent.thread
 import kotlinx.coroutines.CancellationException
@@ -442,7 +443,7 @@ class MuseController(private val context: Context) {
     val audio = PortalAudio { heyMuse.awaitMicFree(MIC_HANDOFF_MS) }
     callAudio = audio
     Log.i(TAG, "calling $id, ${settings.duplex} duplex")
-    c.call(id, audio, CallOptions(duplex = settings.duplex, admit = CALL_ADMIT))
+    c.call(id, audio, CallOptions(duplex = settings.duplex, overall = CALL_LIMIT, admit = CALL_ADMIT))
   }
 
   fun ask(text: String) {
@@ -559,6 +560,8 @@ class MuseController(private val context: Context) {
     const val MIC_HANDOFF_MS = 1_000L
     /** The Portal's budget for a call to be picked up; a refusal costs it once per cool-off. */
     val CALL_ADMIT = 12.seconds
+    /** The ESP32 gadget's limit; the SDK's own default is 5 minutes. */
+    val CALL_LIMIT = 15.minutes
     const val REPLY_WAIT_MS = 6_000
     const val ANSWER_SHOWN_MS = 20_000L
     const val FAILURE_SHOWN_MS = 8_000L

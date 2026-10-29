@@ -99,7 +99,7 @@ fun SettingsScreen(state: MuseState, canOverlay: Boolean, avatar: AvatarLoad, av
               Divider()
               SwitchRow(
                   "Conversation mode (experimental)",
-                  "Muse answers in its own voice, a tap cuts it off, and saying goodbye hangs up. Falls back to a voice note when unavailable.",
+                  "“Hey Muse” starts a call: Muse answers in its own voice, with captions, and a tap cuts it off. End call hangs up. Falls back to a voice note when unavailable.",
                   state.conversationMode,
                   actions::setConversationMode)
               if (!canOverlay) {
