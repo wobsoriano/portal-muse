@@ -214,6 +214,7 @@ private class Preview(val screen: Screen?, val state: ((MuseState) -> MuseState)
             "answered" -> { s -> s.copy(ask = AskState.Answered("p", heard, answer, complete = true), speaking = false) }
             "reply" -> { s -> s.copy(ask = AskState.Recording(0.3f, followUp = true)) }
             "call" -> { s -> s.copy(ask = AskState.Calling("p", CallPhase.Listening, 0.5f)) }
+            "captions" -> { s -> s.copy(ask = AskState.Calling("p", CallPhase.Talking, heard = heard, reply = "$answer In the evening it cools down to 12 degrees, so bring a jacket if you go out. On Saturday rain moves in from the west around noon, and it should clear up by Sunday morning in time for the market.")) }
             "offline" -> { s -> s.copy(ask = AskState.Idle, connection = Status(Phase.Offline, "no internet")) }
             else -> return null
           }
