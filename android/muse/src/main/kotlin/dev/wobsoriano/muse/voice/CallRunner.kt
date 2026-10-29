@@ -38,6 +38,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 internal const val TICK_MS = 20L
+private const val MAX_KINDS = 48
+private const val TAIL_RECORDS = 10
 /** About four mic frames: past this a frame is shed rather than queued behind a stalled socket. */
 internal const val MAX_BACKLOG = 12 shl 10
 /** The newest 320 ms of capture wait for the call; older frames are dropped, never sent late. */
@@ -91,6 +93,10 @@ internal class CallRunner(
   private var mic: ReceiveChannel<ByteArray>? = null
   private var controlOpen = true
   private var shed = 0
+  /** How many records of each kind came, in arrival order, for the end-of-call log. */
+  private val kinds = LinkedHashMap<String, Int>()
+  /** The last few records other than audio, with when they came, to show how the call ended. */
+  private val tail = ArrayDeque<Pair<String, Long>>()
 
   /** Returns how the call ended, after its cleanup. A canceled call is cleaned up too, and then rethrows. */
   suspend fun run(): CallEnd {
@@ -213,7 +219,15 @@ internal class CallRunner(
             } finally {
               i.release()
             }
-        for (o in got) pending += CallInput.Server(parseServerEvent(o))
+        for (o in got) {
+          val kind = recordKind(o)
+          if (kinds.size < MAX_KINDS || kind in kinds) kinds.merge(kind, 1, Int::plus)
+          if (!kind.endsWith(".delta")) {
+            tail.addLast(kind to clock.now())
+            if (tail.size > TAIL_RECORDS) tail.removeFirst()
+          }
+          pending += CallInput.Server(parseServerEvent(o))
+        }
       }
       Inbound.End -> {
         inboundOver = true
@@ -319,7 +333,7 @@ internal class CallRunner(
     when (result) {
       is CallEnd.Declined -> log.info("muse: call declined", "why" to result.why, "end_call_acked" to acked)
       is CallEnd.Over ->
-          log.info("muse: call over", "reason" to result.reason, "end_call_acked" to acked, "advisory_errors" to m.advisoryErrors, "unlined_audio" to m.unlined, "shed_frames" to shed)
+          log.info("muse: call over", "reason" to result.reason, "end_call_acked" to acked, "advisory_errors" to m.advisoryErrors, "unlined_audio" to m.unlined, "shed_frames" to shed, "records" to kinds.entries.joinToString(",") { "${it.key}=${it.value}" }, "last" to tail.joinToString(",") { "${it.first}@-${clock.now() - it.second}ms" })
     }
     return if (result is CallEnd.Over) result.copy(endAcked = acked) else result
   }

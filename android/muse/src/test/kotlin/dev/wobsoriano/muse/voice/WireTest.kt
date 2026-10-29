@@ -232,6 +232,14 @@ class WireTest {
   }
 
   @Test
+  fun aRecordsKindNamesItsTypesOnly() {
+    assertEquals("response.done", recordKind(obj("""{"type":"response.done","response":{"id":"r1"}}""")))
+    assertEquals("conversation.item.added:session_control:stop", recordKind(obj("""{"type":"conversation.item.added","item":{"type":"session_control","name":"stop","call_id":"x"}}""")))
+    assertEquals("conversation.item.added:message", recordKind(obj("""{"type":"conversation.item.added","item":{"type":"message","content":"hello there"}}""")))
+    assertEquals("what was said never shows", "?:?:?", recordKind(obj("""{"type":"I said hi","item":{"type":"Hi Muse","name":"my name is Rob"}}""")))
+  }
+
+  @Test
   fun shortCodes() {
     assertEquals("not_found", shortCode(JsonPrimitive("not_found")))
     assertEquals("v1.e-2", shortCode(JsonPrimitive("v1.e-2")))

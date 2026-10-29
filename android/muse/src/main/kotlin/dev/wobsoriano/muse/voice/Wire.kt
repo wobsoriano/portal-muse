@@ -82,6 +82,16 @@ private val CODE = Regex("[a-z0-9_.-]{1,64}")
 /** A server's error code, only when it is short and plain enough to log. */
 internal fun shortCode(v: JsonElement?): String? = v.string()?.takeIf { CODE.matches(it) }
 
+/**
+ * What kind of record [o] is, for the call's tally: its type, and for an added item the item's type and
+ * name, each a short code or "?". Never a value that could carry speech.
+ */
+internal fun recordKind(o: JsonObject): String {
+  val type = shortCode(o["type"]) ?: "?"
+  val item = o["item"] as? JsonObject ?: return type
+  return "$type:${shortCode(item["type"]) ?: "?"}" + (if ("name" in item) ":${shortCode(item["name"]) ?: "?"}" else "")
+}
+
 private fun JsonElement?.string(): String? = (this as? JsonPrimitive)?.takeIf { it.isString }?.content
 
 /** Python's == between a JSON value and an int, which is what the SDK's checks are. */

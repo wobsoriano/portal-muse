@@ -155,7 +155,7 @@ class CallTest {
     assertTrue("the audio was not closed", "close" in r.audio.events)
     val shown = generateSequence { r.views.poll() }.map { it.phase }.toList()
     assertTrue("shown $shown", CallPhase.Talking in shown && shown.last() == CallPhase.Ending)
-    assertTrue("no end-of-call line:\n${h.logs}", h.logs.contains("muse: call over reason=RemoteStop end_call_acked=true advisory_errors=0 unlined_audio=0 shed_frames=0\n"))
+    assertTrue("no end-of-call line:\n${h.logs}", h.logs.contains("muse: call over reason=RemoteStop end_call_acked=true advisory_errors=0 unlined_audio=0 shed_frames=0 records=hatch.voice.session=1,continuous_audio_video.delta=1,input_audio_buffer.speech_started=1,conversation.item.added:session_control:stop=1 last="))
     h.noSecrets()
   }
 
