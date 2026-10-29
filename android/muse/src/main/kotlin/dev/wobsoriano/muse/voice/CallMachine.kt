@@ -13,6 +13,8 @@ internal const val FRAME_MS = 40L
 internal const val SETTLE_MS = 200L
 /** How long a cut-off answer shows as Interrupted. */
 internal const val INTERRUPTED_MS = 2_000L
+/** Muse still shows as talking this long after its last audible frame: a reply streams in about as fast as it plays, so pauses and jitter would otherwise flicker the view. */
+internal const val TALK_HOLD_MS = 800L
 internal const val AUDIBLE_RMS = 300
 internal const val MAX_PLAYBACK_BYTES = CALL_RATE * 2 * 5
 internal const val MAX_TRACKED_TURNS = 64
@@ -112,6 +114,8 @@ internal class Playhead(private val duplex: Duplex) {
   }
 
   fun audible(now: Long) = now < audibleEnd
+
+  fun talking(now: Long) = now < audibleEnd + TALK_HOLD_MS
 
   fun muting(now: Long) = duplex == Duplex.Half && now < audibleEnd + SETTLE_MS
 
@@ -424,7 +428,7 @@ internal class CallMachine(private val opts: CallOptions, private val nodeId: St
       when {
         phase is Phase.Draining || phase == Phase.Done -> CallPhase.Ending
         phase != Phase.Live -> CallPhase.Connecting
-        playhead.audible(now) -> CallPhase.Talking
+        playhead.talking(now) -> CallPhase.Talking
         now < interruptedUntil -> CallPhase.Interrupted
         turns.busy -> CallPhase.Thinking
         else -> CallPhase.Listening

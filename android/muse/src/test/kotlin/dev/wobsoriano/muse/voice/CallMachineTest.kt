@@ -215,8 +215,18 @@ class CallMachineTest {
   fun aReplyPlaysAndTheViewFollowsIt() {
     val c = live()
     assertEquals(listOf("play 9600", "show Talking"), c.at(1000, Server(audio(ms(200)))))
-    assertEquals(emptyList<String>(), c.until(1199))
-    assertEquals(listOf("show Listening"), c.at(1200, Tick))
+    assertEquals(emptyList<String>(), c.until(1999))
+    assertEquals(listOf("show Listening"), c.at(2000, Tick))
+  }
+
+  @Test
+  fun pausesInAStreamingReplyKeepShowingTalking() {
+    val c = live()
+    c.at(1000, Server(audio(ms(200))))
+    assertEquals("a 700 ms gap", emptyList<String>(), c.until(1900))
+    assertEquals(listOf("play 9600"), c.at(1900, Server(audio(ms(200)))))
+    assertEquals(emptyList<String>(), c.until(2899))
+    assertEquals(listOf("show Listening"), c.at(2900, Tick))
   }
 
   @Test
