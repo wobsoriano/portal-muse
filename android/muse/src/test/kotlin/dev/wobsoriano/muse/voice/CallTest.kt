@@ -26,6 +26,7 @@ import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -200,6 +201,48 @@ class CallTest {
     r.control.trySend(CallCommand.HangUp)
     assertEquals(CallEnd.Over(OverReason.HungUp, endAcked = false), r.await())
     eventually("the stream was left open") { c.reset }
+  }
+
+  @Test
+  fun anUnconfirmedEndGoesAgainBeforeTheNextCall() {
+    val h = online()
+    voice.endCallReply = 500 to """{"ok":false}"""
+    val (r, c) = ready(h)
+    r.control.trySend(CallCommand.HangUp)
+    val first = voice.endCalls.receive("the end-call")
+    assertEquals(CallEnd.Over(OverReason.HungUp, endAcked = false), r.await())
+
+    voice.endCallReply = 200 to """{"ok":true,"result":{"ok":true}}"""
+    val next = call(h)
+    assertEquals("the same end-call, unchanged", first, voice.endCalls.receive("the retried end-call"))
+    assertEquals(c.callId, first.str("call_id"))
+    val d = voice.calls.receive("the next call")
+    d.next("hatch.voice.call.start")
+    next.control.trySend(CallCommand.HangUp)
+    assertEquals(d.callId, voice.endCalls.receive("the next call's end-call").str("call_id"))
+    next.await()
+
+    // Confirmed, it is not owed any more.
+    val third = call(h)
+    val e = voice.calls.receive("a third call")
+    third.control.trySend(CallCommand.HangUp)
+    assertEquals(e.callId, voice.endCalls.receive("the third call's end-call").str("call_id"))
+  }
+
+  @Test
+  fun aRefusedEndIsNotTriedAgain() {
+    val h = online()
+    voice.endCallReply = 404 to """{"ok":false}"""
+    val (r, c) = ready(h)
+    r.control.trySend(CallCommand.HangUp)
+    voice.endCalls.receive("the end-call")
+    r.await()
+    voice.endCallReply = 200 to """{"ok":true,"result":{"ok":true}}"""
+    val next = call(h)
+    val d = voice.calls.receive("the next call")
+    next.control.trySend(CallCommand.HangUp)
+    assertEquals(d.callId, voice.endCalls.receive("the next call's end-call").str("call_id"))
+    assertNotEquals(c.callId, d.callId)
   }
 
   @Test

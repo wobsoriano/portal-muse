@@ -13,6 +13,7 @@ import dev.wobsoriano.muse.voice.CallOptions
 import dev.wobsoriano.muse.voice.CallPhase
 import dev.wobsoriano.muse.voice.CallRunner
 import dev.wobsoriano.muse.voice.CallView
+import dev.wobsoriano.muse.voice.Leftover
 import dev.wobsoriano.muse.voice.Decline
 import dev.wobsoriano.muse.voice.ProbeReport
 import dev.wobsoriano.muse.voice.SilentAudio
@@ -110,6 +111,8 @@ class Client(private val cfg: Config) {
   private var voice: VoiceTarget? = null
   private var running = false
   private var calling = false
+  /** An earlier call's end-call that Muse never confirmed, for the next call to send first. */
+  private var leftover: Leftover? = null
 
   // The rest belongs to the coroutine in run.
 
@@ -224,7 +227,12 @@ class Client(private val cfg: Config) {
                   registered = {},
                   knockEvery = Duration.ZERO,
                   knocks = 0))
-      return CallRunner(link, audio, options, target.nodeId, control, on, log).run()
+      val runner = CallRunner(link, audio, options, target.nodeId, control, on, log, leftover = synchronized(lock) { leftover.also { leftover = null } })
+      try {
+        return runner.run()
+      } finally {
+        synchronized(lock) { leftover = runner.owed }
+      }
     } finally {
       synchronized(lock) { calling = false }
     }

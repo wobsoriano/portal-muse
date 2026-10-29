@@ -46,6 +46,17 @@ private const val REALTIME_PATH = "/voice/realtime"
 private const val END_CALL_PATH = "/voice/end-call"
 /** A call that was never ready gives its end-call this long, so a fallback is not kept waiting. */
 private val UNREADY_CLEANUP = 2.seconds
+/** A leftover end-call gets this long before the next call goes on without it. */
+private val LEFTOVER_TRY = 3.seconds
+private const val LEFTOVER_TRIES = 3
+private const val LEFTOVER_MS = 10 * 60_000L
+
+/**
+ * A call's end-call that Muse never confirmed, kept exactly as first sent. Muse keeps a call through a
+ * dropped connection for about a minute, during which another connection could take it over, so the
+ * next call sends this first. It names the old call's id, so it can never end a new one.
+ */
+internal class Leftover(val body: ByteArray, val since: Long, val tries: Int)
 
 /** Monotonic milliseconds for the machine, and the wall clock the server reads. */
 internal class Clock(val now: () -> Long = { System.nanoTime() / 1_000_000 }, val wall: () -> Long = System::currentTimeMillis)
@@ -64,7 +75,12 @@ internal class CallRunner(
     private val on: (CallView) -> Unit,
     private val log: Logger,
     private val clock: Clock = Clock(),
+    private val leftover: Leftover? = null,
 ) {
+  /** After [run]: the end-call still owed, this call's or [leftover]'s, if any. */
+  var owed: Leftover? = leftover
+    private set
+
   private val started = clock.now()
   private val startedWall = clock.wall()
   private val m = CallMachine(opts, nodeId, uuid4(), started)
@@ -83,7 +99,10 @@ internal class CallRunner(
     val running = link.async { session.run() }
     var end: CallEnd? = null
     try {
-      end = linkUp(running) ?: drive(link)
+      end = linkUp(running) ?: run {
+        if (leftover != null) settle(leftover)
+        drive(link)
+      }
     } finally {
       end = withContext(NonCancellable) { cleanup(end).also { withTimeoutOrNull(1.seconds) { link.coroutineContext.job.cancelAndJoin() } } }
     }
@@ -114,6 +133,19 @@ internal class CallRunner(
       }
     }
     return null
+  }
+
+  /** One more try at an earlier call's end-call. A 4xx is final; anything else unconfirmed stays owed within its bounds. */
+  private suspend fun settle(l: Leftover) {
+    owed = null
+    val status =
+        try {
+          session.request("POST", END_CALL_PATH, listOf(Header("Content-Type", "application/json")), l.body, LEFTOVER_TRY).let { if (endCallAcknowledged(it)) null else it.status }
+        } catch (e: MuseException) {
+          0
+        }
+    log.info("muse: an earlier call's end retried", "acked" to (status == null), "status" to status)
+    if (status != null && status !in 400..499 && l.tries + 1 < LEFTOVER_TRIES && clock.now() - l.since < LEFTOVER_MS) owed = Leftover(l.body, l.since, l.tries + 1)
   }
 
   private suspend fun drive(link: CoroutineScope): CallEnd {
@@ -250,14 +282,17 @@ internal class CallRunner(
     runCatching { audio.close() }
     val s = stream
     var acked = false
+    var refused = false
+    var body: ByteArray? = null
     if (s != null && m.endCallDue) {
       val budget = if (m.wasLive) opts.cleanup else minOf(opts.cleanup, UNREADY_CLEANUP)
       val finished =
           try {
             withTimeoutOrNull(budget) {
-              val body = endCallBody(m.callId, startedWall, clock.wall(), m.threadId)
-              val r = session.request("POST", END_CALL_PATH, listOf(Header("Content-Type", "application/json")), body, budget)
+              val b = endCallBody(m.callId, startedWall, clock.wall(), m.threadId).also { body = it }
+              val r = session.request("POST", END_CALL_PATH, listOf(Header("Content-Type", "application/json")), b, budget)
               acked = endCallAcknowledged(r)
+              refused = !acked && r.status in 400..499
               if (!acked) {
                 log.warn("muse: the call's end was not acknowledged", "status" to r.status)
                 return@withTimeoutOrNull true
@@ -277,6 +312,8 @@ internal class CallRunner(
       if (finished == null) log.warn("muse: the call's cleanup ran out of time", "acked" to acked)
     }
     s?.close()
+    // This call's own end-call comes first: the older one's call has most likely timed out on Muse by now.
+    body?.let { if (!acked && !refused) owed = Leftover(it, clock.now(), 1) }
     val result = end ?: CallEnd.Over(OverReason.Failed("aborted"))
     // Our own words only: a Rejected code has passed shortCode, and every why is ours.
     when (result) {
