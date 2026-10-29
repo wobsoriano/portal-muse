@@ -5,6 +5,7 @@ import dev.wobsoriano.muse.core.CallUpdate
 import dev.wobsoriano.muse.core.ReplyKind
 import dev.wobsoriano.muse.voice.CallEnd
 import dev.wobsoriano.muse.voice.CallPhase
+import dev.wobsoriano.muse.voice.CallView
 import dev.wobsoriano.muse.voice.OverReason
 
 /** One question, from the mic to the spoken answer, started by a tap or by "Hey Muse". */
@@ -25,8 +26,8 @@ sealed interface AskState {
 
   data class Failed(val reason: String) : AskState
 
-  /** A realtime call from "Hey Muse". [phase] and [level] are the call's own, copied from its last update. */
-  data class Calling(val id: String, val phase: CallPhase = CallPhase.Connecting, val level: Float = 0f) : AskState
+  /** A realtime call from "Hey Muse". [phase], [level] and the captions are the call's own, copied from its last update. */
+  data class Calling(val id: String, val phase: CallPhase = CallPhase.Connecting, val level: Float = 0f, val heard: String = "", val reply: String = "") : AskState
 }
 
 sealed interface AskInput {
@@ -150,8 +151,8 @@ private fun AskState.Calling.onCall(update: CallUpdate): AskStep =
             phase == CallPhase.Ending -> AskStep(this)
             // Ready: the chime waits for this, so nobody starts talking before the mic is open.
             phase == CallPhase.Connecting && update.view.phase == CallPhase.Listening ->
-                AskStep(copy(phase = update.view.phase, level = update.view.level), AskEffect.CallReady)
-            else -> AskStep(copy(phase = update.view.phase, level = update.view.level))
+                AskStep(update.view.into(this), AskEffect.CallReady)
+            else -> AskStep(update.view.into(this))
           }
       is CallUpdate.Ended ->
           when (val end = update.end) {
@@ -161,6 +162,8 @@ private fun AskState.Calling.onCall(update: CallUpdate): AskStep =
                 else AskStep(AskState.Idle)
           }
     }
+
+private fun CallView.into(c: AskState.Calling) = c.copy(phase = phase, level = level, heard = heard, reply = reply)
 
 private fun AskState.onReply(reply: AskUpdate): AskStep {
   val asked =

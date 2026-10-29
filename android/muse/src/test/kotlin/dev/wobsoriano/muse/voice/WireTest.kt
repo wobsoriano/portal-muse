@@ -29,6 +29,9 @@ private fun said(e: ServerEvent): String =
       is ServerEvent.InputSuppressed -> "suppressed ${e.itemId}"
       is ServerEvent.ResponseCreated -> "created ${e.id}"
       is ServerEvent.ResponseEnded -> "ended ${e.id}"
+      is ServerEvent.ReplyText -> "reply text ${e.delta}"
+      is ServerEvent.ReplyDone -> "reply done ${e.transcript}"
+      is ServerEvent.Heard -> "heard ${e.transcript}"
       ServerEvent.Stop -> "stop"
       is ServerEvent.Audio -> "audio ${e.pcm.size} ${e.responseId}"
       is ServerEvent.Error -> "error ${e.code}"
@@ -97,6 +100,11 @@ class WireTest {
             """{"type":"hatch.voice.switch_input_hold","held":"true"}""" to "malformed",
             """{"type":"hatch.voice.switch_input_hold"}""" to "malformed",
             """{"type":"input_audio_buffer.speech_started","item_id":"i1"}""" to "speech i1",
+            """{"type":"response.output_audio_transcript.delta","delta":"Hi "}""" to "reply text Hi ",
+            """{"type":"response.output_audio_transcript.delta","delta":5}""" to "other",
+            """{"type":"response.output_audio_transcript.done","transcript":"Hi there."}""" to "reply done Hi there.",
+            """{"type":"conversation.item.input_audio_transcription.completed","transcript":"what time is it"}""" to "heard what time is it",
+            """{"type":"conversation.item.input_audio_transcription.completed"}""" to "other",
             """{"type":"input_audio_buffer.speech_started","item_id":""}""" to "speech null",
             """{"type":"hatch.voice.turn_started","submission_message_id":"m1","item_id":"i1"}""" to "turn m1 i1",
             """{"type":"hatch.voice.turn_started","submission_message_id":"m1"}""" to "malformed",

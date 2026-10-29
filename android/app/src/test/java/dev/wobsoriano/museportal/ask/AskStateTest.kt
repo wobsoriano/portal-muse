@@ -224,6 +224,14 @@ class AskStateTest {
   }
 
   @Test
+  fun aCallKeepsItsCaptions() {
+    val view = CallView(CallPhase.Talking, 0.2f, heard = "hi", reply = "Hello.")
+    assertEquals(
+        AskStep(AskState.Calling("c1", CallPhase.Talking, 0.2f, heard = "hi", reply = "Hello.")),
+        calling(CallPhase.Listening).next(AskInput.Call(CallUpdate.Phase("c1", view))))
+  }
+
+  @Test
   fun aCallChimesOnceWhenMuseFirstListens() {
     val steps =
         run(

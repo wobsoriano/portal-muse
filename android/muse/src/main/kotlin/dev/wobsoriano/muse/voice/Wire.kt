@@ -45,6 +45,15 @@ internal sealed interface ServerEvent {
   /** response.done or response.completed: a response, even a cancelled one, is not the call ending. */
   class ResponseEnded(val id: String?) : ServerEvent
 
+  /** A piece of the spoken reply's transcript. */
+  class ReplyText(val delta: String) : ServerEvent
+
+  /** The whole transcript of the spoken reply. */
+  class ReplyDone(val transcript: String) : ServerEvent
+
+  /** What Muse heard the caller say. */
+  class Heard(val transcript: String) : ServerEvent
+
   /** session_control "stop": Muse ends the call, after a goodbye. Its call_id names the control, never the call. */
   data object Stop : ServerEvent
 
@@ -122,6 +131,9 @@ internal fun parseServerEvent(o: JsonObject): ServerEvent {
     "hatch.voice.turn_settled" -> ServerEvent.TurnSettled(identifier(o["response_message_id"]))
     "hatch.voice.input_suppressed" -> ServerEvent.InputSuppressed(identifier(o["item_id"]))
     "response.created" -> ServerEvent.ResponseCreated(responseId(o))
+    "response.output_audio_transcript.delta" -> o["delta"].string()?.let(ServerEvent::ReplyText) ?: ServerEvent.Other
+    "response.output_audio_transcript.done" -> o["transcript"].string()?.let(ServerEvent::ReplyDone) ?: ServerEvent.Other
+    "conversation.item.input_audio_transcription.completed" -> o["transcript"].string()?.let(ServerEvent::Heard) ?: ServerEvent.Other
     "response.done",
     "response.completed" -> ServerEvent.ResponseEnded(responseId(o))
     "continuous_audio_video.delta" -> continuousAudio(o)

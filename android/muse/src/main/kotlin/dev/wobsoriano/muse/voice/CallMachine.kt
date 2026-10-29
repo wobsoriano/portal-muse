@@ -23,6 +23,8 @@ private const val SPEECH_TAIL_MS = 400L
 private const val LEVEL_MS = 100L
 private const val LEVEL_PEAK = 8000f
 private const val NEVER = Long.MIN_VALUE / 4
+/** Captions keep this much of a transcript, its end. */
+internal const val MAX_CAPTION = 2_000
 
 /** One protocol rule broke, and the call ends. [why] is our own text. */
 internal class CallBroken(val why: String) : Exception(why)
@@ -223,6 +225,8 @@ internal class CallMachine(private val opts: CallOptions, private val nodeId: St
   private var micPeak = 0
   private var level = 0f
   private var levelAt = NEVER
+  private var heard = ""
+  private var reply = ""
   private var shown = CallView(CallPhase.Connecting)
 
   fun begin(): List<Effect> {
@@ -318,8 +322,26 @@ internal class CallMachine(private val opts: CallOptions, private val nodeId: St
       is ServerEvent.TurnStarted -> if (turns.started(e.submissionId, e.itemId)) activity = now
       // An unidentified or unknown settlement cannot retire newer work.
       is ServerEvent.TurnSettled -> if (turns.settled(e.responseMessageId)) activity = now else return
-      is ServerEvent.ResponseCreated,
+      is ServerEvent.ResponseCreated -> {
+        reply = ""
+        activity = now
+      }
       is ServerEvent.ResponseEnded -> activity = now
+      is ServerEvent.ReplyText -> {
+        if (live) reply = (reply + e.delta).takeLast(MAX_CAPTION)
+        activity = now
+      }
+      is ServerEvent.ReplyDone -> {
+        if (live) reply = e.transcript.takeLast(MAX_CAPTION)
+        activity = now
+      }
+      is ServerEvent.Heard -> {
+        if (live) {
+          heard = e.transcript.takeLast(MAX_CAPTION)
+          reply = ""
+        }
+        activity = now
+      }
       is ServerEvent.InputSuppressed,
       is ServerEvent.Audio,
       ServerEvent.Other -> Unit
@@ -383,6 +405,7 @@ internal class CallMachine(private val opts: CallOptions, private val nodeId: St
       waitingPcm.reset()
       playhead.reset()
       receivedAudio = false
+      reply = ""
       activity = minOf(activity, now)
       if (wasAudible) interruptedUntil = now + INTERRUPTED_MS
       out += Effect.Flush
@@ -440,7 +463,7 @@ internal class CallMachine(private val opts: CallOptions, private val nodeId: St
       micPeak = 0
       levelAt = now
     }
-    val v = CallView(view(now), level)
+    val v = CallView(view(now), level, heard, reply)
     if (v != shown) {
       shown = v
       out += Effect.Show(v)

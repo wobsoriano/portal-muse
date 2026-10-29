@@ -8,6 +8,7 @@ import dev.wobsoriano.museportal.ask.AskState
 import dev.wobsoriano.museportal.heymuse.WakeState
 import dev.wobsoriano.muse.voice.CallPhase
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MoodTest {
@@ -70,6 +71,23 @@ class MoodTest {
     assertEquals(
         listOf("Connecting…", "Listening…", "Thinking…", "", "Go ahead, I'm listening", "Ending call…"),
         phases.map { it.statusLine })
+  }
+
+  @Test
+  fun aCallCaptionsMuseWhileItTalksAndWhatItHeardWhileItThinks() {
+    val call = AskState.Calling("c1", CallPhase.Talking, heard = "what time is it", reply = "It's noon.")
+    assertEquals(TurnText("what time is it", "It's noon.", false), call.turnText)
+    assertEquals(TurnText("what time is it", "", false), call.copy(phase = CallPhase.Thinking).turnText)
+    assertEquals("no words yet, no caption", null, call.copy(reply = "").turnText)
+    for (p in listOf(CallPhase.Listening, CallPhase.Interrupted, CallPhase.Connecting, CallPhase.Ending)) assertEquals(null, call.copy(phase = p).turnText)
+  }
+
+  @Test
+  fun aLongCaptionShowsItsNewestWordsFromAWordBoundary() {
+    assertEquals("short", captionTail("short"))
+    val long = (1..100).joinToString(" ") { "w$it" }
+    val tail = captionTail(long, max = 20)
+    assertTrue(tail, tail.startsWith("…w") && long.endsWith(tail.removePrefix("…")) && tail.length <= 21)
   }
 
   @Test

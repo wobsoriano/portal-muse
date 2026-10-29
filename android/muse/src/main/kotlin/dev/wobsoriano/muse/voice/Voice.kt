@@ -81,8 +81,14 @@ enum class CallPhase {
   Ending,
 }
 
-/** What the call shows. [level] is the microphone's, 0..1. */
-data class CallView(val phase: CallPhase, val level: Float = 0f)
+/**
+ * What the call shows. [level] is the microphone's, 0..1. [heard] is what Muse heard the caller say
+ * last, and [reply] what Muse is saying, as far as it has said it; both are blank until Muse sends a
+ * transcript, and neither is in [toString], so a logged view never carries speech.
+ */
+data class CallView(val phase: CallPhase, val level: Float = 0f, val heard: String = "", val reply: String = "") {
+  override fun toString() = "CallView(phase=$phase, level=$level, heard=${heard.length} chars, reply=${reply.length} chars)"
+}
 
 /** Why a call never went live. Nothing was said, so the caller may fall back to a voice note. */
 sealed interface Decline {

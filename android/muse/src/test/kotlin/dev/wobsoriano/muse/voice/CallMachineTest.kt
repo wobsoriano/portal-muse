@@ -13,6 +13,7 @@ import dev.wobsoriano.muse.voice.CallInput.WireFailed
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -514,6 +515,36 @@ class CallMachineTest {
     assertEquals(
         listOf(CallPhase.Listening, CallPhase.Thinking, CallPhase.Talking, CallPhase.Interrupted, CallPhase.Thinking, CallPhase.Listening, CallPhase.Ending),
         c.shown.map { it.phase })
+  }
+
+  @Test
+  fun captionsFollowWhatMuseHeardAndSays() {
+    val c = live()
+    val caption = { c.shown.last().let { it.heard to it.reply } }
+    c.server(ServerEvent.Heard("what time is it"))
+    assertEquals("what time is it" to "", caption())
+    c.server(ServerEvent.ResponseCreated("r1"))
+    c.server(ServerEvent.ReplyText("It's "))
+    c.server(ServerEvent.ReplyText("noon"))
+    assertEquals("what time is it" to "It's noon", caption())
+    c.server(ServerEvent.ReplyDone("It's noon."))
+    assertEquals("It's noon.", caption().second)
+    c.server(ServerEvent.ResponseCreated("r2"))
+    assertEquals("a new reply starts blank", "", caption().second)
+    c.server(ServerEvent.ReplyText("x".repeat(MAX_CAPTION + 10)))
+    assertEquals(MAX_CAPTION, caption().second.length)
+
+    val d = live()
+    d.server(ServerEvent.ReplyText("Once upon"))
+    d.at(1000, Server(audio(ms(1000))))
+    assertEquals(listOf("flush", "show Interrupted"), d.at(1100, Server(ServerEvent.SpeechStarted("i1"))))
+    assertEquals("a cut-off reply's words go with it", "", d.shown.last().reply)
+  }
+
+  @Test
+  fun aViewNeverPrintsWhatWasSaid() {
+    val v = CallView(CallPhase.Talking, 0.5f, heard = "my secret", reply = "your secret")
+    assertFalse(v.toString(), "secret" in v.toString())
   }
 
   @Test

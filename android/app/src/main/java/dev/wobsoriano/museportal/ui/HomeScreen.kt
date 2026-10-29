@@ -53,6 +53,13 @@ val AskState.turnText: TurnText?
         is AskState.Heard -> TurnText(heard, "", false)
         is AskState.Answered -> TurnText(heard, answer, false).takeIf { heard.isNotEmpty() || answer.isNotEmpty() }
         is AskState.Failed -> TurnText("", reason, true)
+        // Captions only while they are current: Muse's words as it says them, and what it heard while it thinks.
+        is AskState.Calling ->
+            when (phase) {
+              CallPhase.Talking -> TurnText(heard, captionTail(reply), false).takeIf { reply.isNotEmpty() }
+              CallPhase.Thinking -> TurnText(heard, "", false).takeIf { heard.isNotEmpty() }
+              else -> null
+            }
         else -> null
       }
 
@@ -91,6 +98,14 @@ fun HomeScreen(state: MuseState, avatar: AvatarSet?, onTap: () -> Unit, onEndCal
               }
             }
       }
+}
+
+/** A long reply shows its newest words, from a word boundary. */
+internal fun captionTail(text: String, max: Int = 220): String {
+  if (text.length <= max) return text
+  val cut = text.length - max
+  val space = text.indexOf(' ', cut)
+  return "…" + (if (space in cut until text.length - 1) text.substring(space + 1) else text.substring(cut))
 }
 
 private data class Line(val status: String, val turn: TurnText?)
