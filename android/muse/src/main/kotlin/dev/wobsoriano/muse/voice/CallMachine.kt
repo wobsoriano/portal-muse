@@ -23,6 +23,14 @@ private const val SPEECH_TAIL_MS = 400L
 private const val LEVEL_MS = 100L
 private const val LEVEL_PEAK = 8000f
 private const val NEVER = Long.MIN_VALUE / 4
+/** After both sides said goodbye and Muse's has played, how long Muse gets to hang up before the device does. Muse took 3.4 s when measured. */
+internal const val PARTING_MS = 8_000L
+
+private val FAREWELL =
+    Regex("""\b(good-?bye|bye(-bye)?|see (you|ya)|good ?night|take care|talk (to you )?(later|soon)|catch you later|have a (good|great|nice|lovely) (one|day|night|evening|weekend))\b""", RegexOption.IGNORE_CASE)
+
+internal fun isFarewell(text: String) = FAREWELL.containsMatchIn(text)
+
 /** Captions keep this much of a transcript, its end. */
 internal const val MAX_CAPTION = 2_000
 
@@ -168,6 +176,12 @@ internal class TurnLedger {
  * [step]'s `now` is milliseconds on any monotonic base, [t0] the call's start on it, so tests script
  * time. Only the call's one coroutine calls it.
  */
+private enum class Goodbye {
+  None,
+  Caller,
+  Both,
+}
+
 internal class CallMachine(private val opts: CallOptions, private val nodeId: String, val callId: String, private val t0: Long) {
   sealed interface Phase {
     /** The start and the offer are sent; no head yet. */
@@ -225,6 +239,13 @@ internal class CallMachine(private val opts: CallOptions, private val nodeId: St
   private var micPeak = 0
   private var level = 0f
   private var levelAt = NEVER
+  /**
+   * Who has said goodbye in the last exchange. Muse may take seconds to hang up after its own goodbye, or
+   * not at all, so once both have, the call stops listening, shows it is ending, and gives Muse
+   * [PARTING_MS] after its goodbye has played.
+   */
+  private var goodbye = Goodbye.None
+  private var partedAt = NEVER
   private var heard = ""
   private var reply = ""
   private var shown = CallView(CallPhase.Connecting)
@@ -256,6 +277,10 @@ internal class CallMachine(private val opts: CallOptions, private val nodeId: St
       Phase.Live ->
           when {
             now - t0 >= overallMs -> over(OverReason.TooLong, now, out)
+            goodbye == Goodbye.Both && playhead.drained(now) -> {
+              if (partedAt == NEVER) partedAt = now
+              if (now - partedAt >= PARTING_MS) over(OverReason.Goodbye, now, out)
+            }
             !turns.busy && now - activity >= idleMs -> over(OverReason.Idle, now, out)
             micEnded && !gated(now) && now >= nextQuiet -> {
               out += Effect.Send(ClientLine.Append(ByteArray(CALL_FRAME_BYTES)))
@@ -332,13 +357,17 @@ internal class CallMachine(private val opts: CallOptions, private val nodeId: St
         activity = now
       }
       is ServerEvent.ReplyDone -> {
-        if (live) reply = e.transcript.takeLast(MAX_CAPTION)
+        if (live) {
+          reply = e.transcript.takeLast(MAX_CAPTION)
+          if (goodbye == Goodbye.Caller && isFarewell(e.transcript)) goodbye = Goodbye.Both
+        }
         activity = now
       }
       is ServerEvent.Heard -> {
         if (live) {
           heard = e.transcript.takeLast(MAX_CAPTION)
           reply = ""
+          if (goodbye != Goodbye.Both) goodbye = if (isFarewell(e.transcript)) Goodbye.Caller else Goodbye.None
         }
         activity = now
       }
@@ -406,6 +435,9 @@ internal class CallMachine(private val opts: CallOptions, private val nodeId: St
       playhead.reset()
       receivedAudio = false
       reply = ""
+      // Cut off mid-goodbye, the caller has more to say.
+      goodbye = Goodbye.None
+      partedAt = NEVER
       activity = minOf(activity, now)
       if (wasAudible) interruptedUntil = now + INTERRUPTED_MS
       out += Effect.Flush
@@ -428,7 +460,7 @@ internal class CallMachine(private val opts: CallOptions, private val nodeId: St
     if (playhead.drained(now)) over(reason, now, out)
   }
 
-  private fun gated(now: Long) = phase != Phase.Live || held || playhead.muting(now)
+  private fun gated(now: Long) = phase != Phase.Live || held || goodbye == Goodbye.Both || playhead.muting(now)
 
   private fun mic(pcm: ByteArray, now: Long, out: MutableList<Effect>) {
     if (phase != Phase.Live && phase !is Phase.Draining) return
@@ -452,6 +484,7 @@ internal class CallMachine(private val opts: CallOptions, private val nodeId: St
         phase is Phase.Draining || phase == Phase.Done -> CallPhase.Ending
         phase != Phase.Live -> CallPhase.Connecting
         playhead.talking(now) -> CallPhase.Talking
+        goodbye == Goodbye.Both -> CallPhase.Ending
         now < interruptedUntil -> CallPhase.Interrupted
         turns.busy -> CallPhase.Thinking
         else -> CallPhase.Listening

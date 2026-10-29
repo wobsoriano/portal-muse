@@ -118,6 +118,9 @@ sealed interface OverReason {
 
   data object Idle : OverReason
 
+  /** The caller and Muse said goodbye, and Muse did not hang up in time, so the device did. */
+  data object Goodbye : OverReason
+
   data object TooLong : OverReason
 
   data object HungUp : OverReason

@@ -541,6 +541,68 @@ class CallMachineTest {
     assertEquals("a cut-off reply's words go with it", "", d.shown.last().reply)
   }
 
+  // Goodbyes: Muse may hang up seconds after its own, or not at all.
+
+  /** The caller says [said], and Muse answers [answer] with a second of speech from t=1000. */
+  private fun exchange(said: String, answer: String): Call {
+    val c = live()
+    c.server(ServerEvent.Heard(said))
+    c.server(ServerEvent.TurnStarted("m1", "i1"))
+    c.server(ServerEvent.ResponseCreated("r1"))
+    c.at(1000, Server(audio(ms(1000))))
+    c.server(ServerEvent.ReplyDone(answer))
+    return c
+  }
+
+  @Test
+  fun onceBothSayGoodbyeTheCallStopsListeningAndShowsItIsEnding() {
+    val c = exchange("Thanks, bye!", "Bye! Have a great day.")
+    assertEquals("nothing goes up once both said goodbye", emptyList<String>(), appends(c.next(Mic(tone(5000)))))
+    assertEquals("Muse's goodbye still shows as talking", emptyList<String>(), c.until(2799))
+    assertEquals(listOf("show Ending"), c.at(2800, Tick))
+  }
+
+  @Test
+  fun museStillHangsUpItself() {
+    val c = exchange("ok goodbye", "Goodbye!")
+    c.until(5600)
+    assertEquals(listOf("finish ${CallEnd.Over(OverReason.RemoteStop)}"), c.server(ServerEvent.Stop))
+  }
+
+  @Test
+  fun ifMuseDoesNotHangUpTheDeviceDoesAfterItsGoodbyePlayed() {
+    val c = exchange("bye Muse", "Take care, bye!")
+    // The goodbye has played at 2200: the mic's settle included.
+    assertEquals(emptyList<String>(), c.until(10_199).filter { it.startsWith("finish") })
+    assertEquals(listOf("finish ${CallEnd.Over(OverReason.Goodbye)}"), c.at(10_200, Tick))
+  }
+
+  @Test
+  fun oneSidedGoodbyesKeepTheCallGoing() {
+    for ((said, answer) in listOf("bye" to "Before you go, one more thing.", "what's a good riddle" to "Here's one. Bye the way...", "tell me more" to "Goodbye!")) {
+      val c = exchange(said, answer)
+      assertFalse("$said / $answer", "show Ending" in c.until(2800))
+      assertEquals("$said / $answer", listOf("append sound"), c.next(Mic(tone(5000))))
+      assertEquals("$said / $answer", emptyList<String>(), c.until(20_000).filter { it.startsWith("finish") })
+    }
+  }
+
+  @Test
+  fun cuttingOffMusesGoodbyeKeepsTheCall() {
+    val c = exchange("bye", "Bye!")
+    c.at(1500, Interrupt)
+    assertEquals(listOf("append sound"), c.next(Mic(tone(5000))))
+    assertEquals(emptyList<String>(), c.until(20_000).filter { it.startsWith("finish") })
+  }
+
+  @Test
+  fun farewells() {
+    for (s in listOf("Thanks, bye!", "Goodbye.", "good-bye", "bye-bye", "See you tomorrow", "Good night!", "Take care.", "Talk to you later", "Have a great day!"))
+        assertTrue(s, isFarewell(s))
+    for (s in listOf("maybe later", "standby mode", "I'll tell you later", "byte", "goodbyes are hard to write"))
+        assertFalse(s, isFarewell(s))
+  }
+
   @Test
   fun aViewNeverPrintsWhatWasSaid() {
     val v = CallView(CallPhase.Talking, 0.5f, heard = "my secret", reply = "your secret")
