@@ -1,5 +1,6 @@
 package dev.wobsoriano.museportal.overlay
 
+import dev.wobsoriano.muse.voice.CallPhase
 import dev.wobsoriano.museportal.ask.AskState
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -27,6 +28,11 @@ class OverlayPolicyTest {
   @Test
   fun aFollowUpKeepsTheBarUp() {
     assertEquals(true, overlayWanted(AskState.Recording(followUp = true), speaking = false, inFront = false))
+  }
+
+  @Test
+  fun aCallKeepsTheBarUpUntilItEnds() {
+    assertEquals(true, overlayWanted(AskState.Calling("c1", CallPhase.Ending), speaking = false, inFront = false))
   }
 
   @Test

@@ -26,6 +26,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -41,9 +42,10 @@ private fun b64(b: ByteArray) = Base64.getEncoder().encodeToString(b)
  * The app's side, driving a real core. Every call the core makes is written down as the line musecore
  * printed for it on stdout, so the expected values below are core_test.go's own.
  */
-class App(dir: File) : CoreListener, BlePeripheral {
+class App(dir: File, http: OkHttpClient? = null) : CoreListener, BlePeripheral {
   val lines = LinkedBlockingQueue<String>()
-  val core = MuseCore(FileStore(File(dir, "muse.json")), "dev", this, this)
+  val calls = LinkedBlockingQueue<CallUpdate>()
+  val core = MuseCore(FileStore(File(dir, "muse.json")), "dev", this, this, http = http)
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
   private val job: Job = scope.launch { core.run() }
   private var closed = false
@@ -68,6 +70,10 @@ class App(dir: File) : CoreListener, BlePeripheral {
   override fun pairStatus(status: PairStatus) = line("pair.status", "state" to status.state.name.lowercase(), "name" to status.name, "error" to status.error)
 
   override fun reply(update: AskUpdate) = line("reply", "id" to update.id, "kind" to update.kind.name.lowercase(), "text" to update.text, "error" to update.error)
+
+  override fun call(update: CallUpdate) {
+    calls.add(update)
+  }
 
   override fun advertise(ad: Advertisement) =
       line(

@@ -6,6 +6,7 @@ import dev.wobsoriano.museportal.CoreState
 import dev.wobsoriano.museportal.MuseState
 import dev.wobsoriano.museportal.ask.AskState
 import dev.wobsoriano.museportal.heymuse.WakeState
+import dev.wobsoriano.muse.voice.CallPhase
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -58,5 +59,30 @@ class MoodTest {
     assertEquals("Online", online.connectionLabel)
     assertEquals("Connecting…", online.copy(connection = Status(Phase.Connecting)).connectionLabel)
     assertEquals("Restarting…", online.copy(core = CoreState.Restarting("boom", 1000)).connectionLabel)
+  }
+
+  @Test
+  fun aCallShowsWhoIsTalking() {
+    val phases = CallPhase.entries.map { online.copy(ask = AskState.Calling("c1", it, 0.5f)) }
+    assertEquals(
+        listOf(Mood.Thinking, Mood.Hearing, Mood.Thinking, Mood.Speaking, Mood.Hearing, Mood.Thinking),
+        phases.map { it.mood })
+    assertEquals(
+        listOf("Connecting…", "Listening…", "Thinking…", "", "Go ahead, I'm listening", "Ending call…"),
+        phases.map { it.statusLine })
+  }
+
+  @Test
+  fun aCallCaptionsMuseWhileItTalksAndWhatItHeardWhileItThinks() {
+    val call = AskState.Calling("c1", CallPhase.Talking, heard = "what time is it", reply = "It's noon.")
+    assertEquals(TurnText("what time is it", "It's noon.", false, live = true), call.turnText)
+    assertEquals(TurnText("what time is it", "", false), call.copy(phase = CallPhase.Thinking).turnText)
+    assertEquals("no words yet, no caption", null, call.copy(reply = "").turnText)
+    for (p in listOf(CallPhase.Listening, CallPhase.Interrupted, CallPhase.Connecting, CallPhase.Ending)) assertEquals(null, call.copy(phase = p).turnText)
+  }
+
+  @Test
+  fun theOrbFollowsTheVoiceInACall() {
+    assertEquals(0.5f, online.copy(ask = AskState.Calling("c1", CallPhase.Listening, 0.5f)).level, 0f)
   }
 }

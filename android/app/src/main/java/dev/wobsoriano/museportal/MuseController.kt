@@ -11,20 +11,29 @@ import dev.wobsoriano.muse.Logger
 import dev.wobsoriano.muse.Phase
 import dev.wobsoriano.muse.core.AskUpdate
 import dev.wobsoriano.muse.core.BleEvents
+import dev.wobsoriano.muse.core.CallUpdate
 import dev.wobsoriano.muse.core.CoreConfig
 import dev.wobsoriano.muse.core.CoreListener
 import dev.wobsoriano.muse.core.MuseCore
 import dev.wobsoriano.muse.core.PairStatus
 import dev.wobsoriano.muse.core.Status
+import dev.wobsoriano.muse.voice.CallCommand
+import dev.wobsoriano.muse.voice.CallEnd
+import dev.wobsoriano.muse.voice.CallOptions
+import dev.wobsoriano.muse.voice.Decline
+import dev.wobsoriano.muse.voice.Duplex
 import dev.wobsoriano.museportal.ask.AskEffect
 import dev.wobsoriano.museportal.ask.AskInput
 import dev.wobsoriano.museportal.ask.AskState
+import dev.wobsoriano.museportal.ask.holdsMic
 import dev.wobsoriano.museportal.ask.inFlight
 import dev.wobsoriano.museportal.ask.next
 import dev.wobsoriano.museportal.audio.Capture
 import dev.wobsoriano.museportal.audio.Chime
 import dev.wobsoriano.museportal.audio.Microphone
 import dev.wobsoriano.museportal.audio.Speaker
+import dev.wobsoriano.museportal.audio.call.PortalAudio
+import dev.wobsoriano.museportal.call.CallGate
 import dev.wobsoriano.museportal.ble.GattPeripheral
 import dev.wobsoriano.museportal.device.NetworkInfo
 import dev.wobsoriano.museportal.device.Settings
@@ -32,15 +41,21 @@ import dev.wobsoriano.museportal.heymuse.WakeHost
 import dev.wobsoriano.museportal.heymuse.WakeInput
 import dev.wobsoriano.museportal.heymuse.WakeListener
 import dev.wobsoriano.museportal.heymuse.WakeState
+import dev.wobsoriano.museportal.heymuse.WakeTurn
 import dev.wobsoriano.museportal.audio.VoiceOption
 import dev.wobsoriano.museportal.setup.Screen
 import dev.wobsoriano.museportal.setup.SdkToken
 import dev.wobsoriano.museportal.setup.SetupFacts
 import dev.wobsoriano.museportal.setup.SetupProgress
 import dev.wobsoriano.museportal.setup.screen
+import dev.wobsoriano.museportal.ui.online
 import java.io.File
 import java.io.IOException
+import java.text.DateFormat
+import java.util.Date
 import java.util.UUID
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlin.concurrent.thread
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -90,6 +105,7 @@ data class MuseState(
     val wakeEnabled: Boolean = false,
     val wake: WakeState = WakeState.Off,
     val keepListening: Boolean = false,
+    val conversationMode: Boolean = false,
     /** Our screen is in front, so the overlay isn't needed. */
     val inFront: Boolean = false,
     val version: String = "",
@@ -112,6 +128,7 @@ class MuseController(private val context: Context) {
               version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "dev",
               wakeEnabled = settings.wakeEnabled,
               keepListening = settings.keepListening,
+              conversationMode = settings.conversationMode,
               voice = settings.voice,
               speechRate = settings.speechRate,
               setup = settings.setup)
@@ -150,6 +167,16 @@ class MuseController(private val context: Context) {
         override fun pairStatus(status: PairStatus) = _state.update { it.copy(pairing = status) }
 
         override fun reply(update: AskUpdate) = step(AskInput.Reply(update))
+
+        override fun call(update: CallUpdate) {
+          if (update is CallUpdate.Ended) {
+            Log.i(TAG, "call ${update.id} ended: ${update.end}")
+            callGate.record(update.end)
+            lastCall = update.end
+            callAudio = null
+          }
+          step(AskInput.Call(update))
+        }
       }
 
   private val network = NetworkInfo(context) { sendConfig() }
@@ -166,6 +193,10 @@ class MuseController(private val context: Context) {
   private var expiry: Job? = null
   private var expiring: AskState? = null
   private val chime = Chime()
+  private val callGate = CallGate()
+  /** The running call's mic and speaker, so its chime can be left out of what Muse hears. */
+  @Volatile private var callAudio: PortalAudio? = null
+  @Volatile private var lastCall: CallEnd? = null
   private var lastConfig: CoreConfig? = null
   @Volatile private var stopRecording = false
   @Volatile private var speaking = false
@@ -295,6 +326,17 @@ class MuseController(private val context: Context) {
     _state.update { it.copy(keepListening = on) }
   }
 
+  /** Toggling it forgets any refusal, so the next wake tries a call. */
+  fun setConversationMode(on: Boolean) {
+    settings.conversationMode = on
+    callGate.reset()
+    _state.update { it.copy(conversationMode = on) }
+  }
+
+  fun setDuplex(duplex: Duplex) {
+    settings.duplex = duplex
+  }
+
   fun setVoice(name: String?, rate: Float) {
     settings.voice = name
     settings.speechRate = rate
@@ -325,10 +367,18 @@ class MuseController(private val context: Context) {
             "Pairing: ${s.pairing?.let { "${it.state} ${it.name} ${it.error}".trim() } ?: "not opened"}",
             "Hey Muse: ${if (s.wakeEnabled) s.wake.toString() else "off"}",
             "Keep listening: ${s.keepListening}",
+            "Conversation mode: ${if (s.conversationMode) "on, ${settings.duplex} duplex" else "off"}",
+            "Calls: ${if (callGate.open()) "tried on a wake" else "voice notes until ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(callGate.until))}"}, last ${lastCall ?: "none"}",
             "TTS: ${if (s.canSpeak) "ready, ${s.voices.size} voices, voice ${s.voice ?: "default"}, rate ${s.speechRate}" else "none"}",
             "Wi-Fi: ${network.snapshot().ssid.ifEmpty { "unknown" }}",
         )
         .joinToString("\n")
+  }
+
+  /** Debug: asks Muse a few questions and logs each one's statuses and codes, never a body or a token. */
+  fun probe(realtime: Boolean) {
+    val c = core
+    if (c == null) Log.i(PROBE_TAG, "the Muse core is not running") else c.probe(realtime) { line -> Log.i(PROBE_TAG, line) }
   }
 
   /** Network facts may have changed after a permission grant. */
@@ -364,17 +414,36 @@ class MuseController(private val context: Context) {
     get() = settings.wakeEnabled
 
   /**
-   * "Hey Muse" was heard: chimes and starts an ask, unless a question is already being recorded.
-   * With [listenerRecords] our listener records it on the mic that heard the wake; otherwise (a
+   * "Hey Muse" was heard: chimes and starts an ask, unless the mic is already taken. With
+   * [listenerRecords] our listener records it on the mic that heard the wake; otherwise (a
    * portal-wake hand-off) the question gets a mic of its own.
    */
-  fun wake(listenerRecords: Boolean): Boolean {
-    if (_state.value.ask is AskState.Recording) return false
+  fun wake(listenerRecords: Boolean): WakeTurn {
+    if (_state.value.ask.holdsMic) return WakeTurn.Refused
     speaker.stop()
     stopRecording = false
+    if (callAllowed()) {
+      step(AskInput.WakeCall(UUID.randomUUID().toString()))
+      return WakeTurn.Call
+    }
     chime.play()
     step(AskInput.Wake(listenerRecords), skipMs = WakeListener.CHIME_SKIP_MS)
-    return true
+    return WakeTurn.Record
+  }
+
+  /** An ask in flight would have the core refuse a call as busy, which would close the gate for nothing. */
+  private fun callAllowed(): Boolean {
+    val s = _state.value
+    return settings.conversationMode && callGate.open() && s.online && !s.ask.inFlight
+  }
+
+  private fun startCall(id: String) {
+    speaker.stop()
+    val c = core ?: return listener.call(CallUpdate.Ended(id, CallEnd.Declined(Decline.Offline)))
+    val audio = PortalAudio { heyMuse.awaitMicFree(MIC_HANDOFF_MS) }
+    callAudio = audio
+    Log.i(TAG, "calling $id, ${settings.duplex} duplex")
+    c.call(id, audio, CallOptions(duplex = settings.duplex, overall = CALL_LIMIT, admit = CALL_ADMIT))
   }
 
   fun ask(text: String) {
@@ -408,8 +477,19 @@ class MuseController(private val context: Context) {
         chime.play()
         record(WakeListener.CHIME_SKIP_MS, waitForSpeechMs = REPLY_WAIT_MS)
       }
+      AskEffect.FallBack -> {
+        chime.play()
+        record(WakeListener.CHIME_SKIP_MS)
+      }
       AskEffect.StopRecording -> stopRecording = true
       is AskEffect.Speak -> speaker.speak(e.text)
+      is AskEffect.StartCall -> startCall(e.id)
+      AskEffect.HangUp -> core?.callCommand(CallCommand.HangUp)
+      AskEffect.Interrupt -> core?.callCommand(CallCommand.Interrupt)
+      AskEffect.CallReady -> {
+        chime.play()
+        callAudio?.muteFor(WakeListener.CHIME_SKIP_MS)
+      }
       null -> Unit
     }
     afterStep()
@@ -474,9 +554,14 @@ class MuseController(private val context: Context) {
 
   private companion object {
     const val TAG = "MuseApp"
+    const val PROBE_TAG = "MuseProbe"
     const val HEALTHY_MS = 60_000L
     const val MAX_BACKOFF_MS = 30_000L
     const val MIC_HANDOFF_MS = 1_000L
+    /** The Portal's budget for a call to be picked up; a refusal costs it once per cool-off. */
+    val CALL_ADMIT = 12.seconds
+    /** The ESP32 gadget's limit; the SDK's own default is 5 minutes. */
+    val CALL_LIMIT = 15.minutes
     const val REPLY_WAIT_MS = 6_000
     const val ANSWER_SHOWN_MS = 20_000L
     const val FAILURE_SHOWN_MS = 8_000L

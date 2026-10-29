@@ -69,6 +69,7 @@ import dev.wobsoriano.museportal.ui.MuseTheme
 import dev.wobsoriano.museportal.ui.level
 import dev.wobsoriano.museportal.ui.mood
 import dev.wobsoriano.museportal.ui.statusLine
+import dev.wobsoriano.museportal.ui.RollingText
 import dev.wobsoriano.museportal.ui.turnText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -198,7 +199,9 @@ class OverlayBar(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis)
                 val answer = turn?.answer.orEmpty()
-                if (answer.isNotEmpty()) {
+                if (turn?.live == true) {
+                  RollingText(answer, 2, MaterialTheme.typography.titleLarge, Ink)
+                } else if (answer.isNotEmpty()) {
                   Text(
                       answer,
                       style = MaterialTheme.typography.titleLarge,

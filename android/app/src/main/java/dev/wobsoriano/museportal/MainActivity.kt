@@ -32,6 +32,8 @@ import dev.wobsoriano.muse.Phase
 import dev.wobsoriano.muse.core.PairState
 import dev.wobsoriano.muse.core.PairStatus
 import dev.wobsoriano.muse.core.Status
+import dev.wobsoriano.muse.voice.CallPhase
+import dev.wobsoriano.muse.voice.Duplex
 import dev.wobsoriano.museportal.ask.AskState
 import dev.wobsoriano.museportal.avatar.AvatarLoad
 import dev.wobsoriano.museportal.setup.Screen
@@ -109,7 +111,8 @@ class MainActivity : ComponentActivity() {
             when (val s = shown.screen) {
               Screen.Loading -> Box(Modifier.fillMaxSize())
               is Screen.Setup -> SetupScreen(s.step, state, canOverlay, set, if (readOnly) PreviewSetup else setupActions)
-              Screen.Home -> HomeScreen(state, set, onTap = { if (!readOnly) muse.tapMic() }, onSettings = { settings = true })
+              Screen.Home ->
+                  HomeScreen(state, set, onTap = { if (!readOnly) muse.tapMic() }, onEndCall = { if (!readOnly) muse.dismiss() }, onSettings = { settings = true })
             }
       }
     }
@@ -152,6 +155,8 @@ class MainActivity : ComponentActivity() {
 
         override fun setKeepListening(on: Boolean) = muse.setKeepListening(on)
 
+        override fun setConversationMode(on: Boolean) = muse.setConversationMode(on)
+
         override fun requestOverlay() = this@MainActivity.requestOverlay()
 
         override fun setVoice(name: String?, rate: Float) = muse.setVoice(name, rate)
@@ -173,7 +178,8 @@ class MainActivity : ComponentActivity() {
   // Lets adb set the token without the Portal's on-screen keyboard, ask without the mic and flip the
   // wake word: `am start -n .../.MainActivity --es sdkToken mgst_... --es ask "what time is it" --ez heyMuse true`.
   // A debug build also previews screens without touching saved state: `--es previewSetup pair`,
-  // `--es previewHome thinking`, `--ez noAvatar true`, `--es page settings`.
+  // `--es previewHome thinking` (or `call`), `--ez noAvatar true`, `--es page settings`, and sets a
+  // call's duplex with `--es duplex full|half`.
   private fun applyExtras(intent: Intent?) {
     intent?.getStringExtra("name")?.let(muse::rename)
     intent?.getStringExtra("sdkToken")?.let(muse::saveToken)
@@ -182,6 +188,7 @@ class MainActivity : ComponentActivity() {
     intent?.getStringExtra("page")?.let { settings = it == "settings" }
     if (!BuildConfig.DEBUG || intent == null) return
     if (intent.getBooleanExtra("noAvatar", false)) avatars.hide() else if (intent.hasExtra("noAvatar")) avatars.reload()
+    intent.getStringExtra("duplex")?.let { d -> Duplex.entries.find { it.name.equals(d, ignoreCase = true) }?.let(muse::setDuplex) }
     preview.value = Preview.of(intent.getStringExtra("previewSetup"), intent.getStringExtra("previewHome"))
   }
 }
@@ -206,6 +213,8 @@ private class Preview(val screen: Screen?, val state: ((MuseState) -> MuseState)
             "speaking" -> { s -> s.copy(ask = AskState.Answered("p", heard, answer, complete = true), speaking = true) }
             "answered" -> { s -> s.copy(ask = AskState.Answered("p", heard, answer, complete = true), speaking = false) }
             "reply" -> { s -> s.copy(ask = AskState.Recording(0.3f, followUp = true)) }
+            "call" -> { s -> s.copy(ask = AskState.Calling("p", CallPhase.Listening, 0.5f)) }
+            "captions" -> { s -> s.copy(ask = AskState.Calling("p", CallPhase.Talking, heard = heard, reply = "$answer In the evening it cools down to 12 degrees, so bring a jacket if you go out. On Saturday rain moves in from the west around noon, and it should clear up by Sunday morning in time for the market.")) }
             "offline" -> { s -> s.copy(ask = AskState.Idle, connection = Status(Phase.Offline, "no internet")) }
             else -> return null
           }

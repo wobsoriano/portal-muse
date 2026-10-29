@@ -39,12 +39,22 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.unit.isSpecified
 import dev.wobsoriano.museportal.MuseState
 import dev.wobsoriano.museportal.ask.AskState
 import dev.wobsoriano.museportal.avatar.AvatarSet
+import dev.wobsoriano.muse.voice.CallPhase
 
-/** What the turn has to say: the question as heard and the answer so far, or why it failed. */
-data class TurnText(val heard: String, val answer: String, val failed: Boolean)
+/** What the turn has to say: the question as heard and the answer so far, or why it failed. [live]: captions of a call, newest words last. */
+data class TurnText(val heard: String, val answer: String, val failed: Boolean, val live: Boolean = false)
 
 val AskState.turnText: TurnText?
   get() =
@@ -52,16 +62,23 @@ val AskState.turnText: TurnText?
         is AskState.Heard -> TurnText(heard, "", false)
         is AskState.Answered -> TurnText(heard, answer, false).takeIf { heard.isNotEmpty() || answer.isNotEmpty() }
         is AskState.Failed -> TurnText("", reason, true)
+        // Captions only while they are current: Muse's words as it says them, and what it heard while it thinks.
+        is AskState.Calling ->
+            when (phase) {
+              CallPhase.Talking -> TurnText(heard, reply, false, live = true).takeIf { reply.isNotEmpty() }
+              CallPhase.Thinking -> TurnText(heard, "", false).takeIf { heard.isNotEmpty() }
+              else -> null
+            }
         else -> null
       }
 
 /**
  * The screen a room sees: the character (or the orb) in the middle, one line beneath it, and the turn's
  * words under that. Tapping the character asks; the rest of the screen ignores taps, so waking the
- * screen or brushing it doesn't start a recording.
+ * screen or brushing it doesn't start a recording. A call has its own button to hang up.
  */
 @Composable
-fun HomeScreen(state: MuseState, avatar: AvatarSet?, onTap: () -> Unit, onSettings: () -> Unit) {
+fun HomeScreen(state: MuseState, avatar: AvatarSet?, onTap: () -> Unit, onEndCall: () -> Unit, onSettings: () -> Unit) {
   val mood = state.mood
   Box(Modifier.fillMaxSize()) {
         TopBar(state, onSettings)
@@ -80,14 +97,38 @@ fun HomeScreen(state: MuseState, avatar: AvatarSet?, onTap: () -> Unit, onSettin
                     Character(mood, state.level, avatar, side)
                   }
               Spacer(Modifier.height(16.dp))
-              AnimatedContent(Line(state.statusLine, turn), transitionSpec = { fadeIn(tween(400)) togetherWith fadeOut(tween(400)) }, label = "turn") { line ->
+              AnimatedContent(Line(state.statusLine, turn), transitionSpec = { fadeIn(tween(400)) togetherWith fadeOut(tween(400)) }, contentKey = { it.key }, label = "turn") { line ->
                 TurnWords(line, captionOnly = avatar != null)
+              }
+              val call = state.ask as? AskState.Calling
+              if (call != null && call.phase != CallPhase.Ending) {
+                Spacer(Modifier.height(24.dp))
+                Pill("End call", onEndCall, primary = false, danger = true)
               }
             }
       }
 }
 
-private data class Line(val status: String, val turn: TurnText?)
+/**
+ * Live captions: at most [lines] lines, the newest at the bottom, each new line pushing the oldest out
+ * the top. The text keeps its start, so the lines already shown never rewrap as words arrive.
+ */
+@Composable
+fun RollingText(text: String, lines: Int, style: TextStyle, color: Color, textAlign: TextAlign? = null) {
+  // Every line exactly this tall, so the box holds whole lines only.
+  val line = if (style.lineHeight.isSpecified) style.lineHeight else style.fontSize * 1.3f
+  val exact = style.copy(lineHeight = line, lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None), platformStyle = PlatformTextStyle(includeFontPadding = false))
+  val height = with(LocalDensity.current) { line.toDp() } * lines
+  Box(Modifier.fillMaxWidth().heightIn(max = height).clipToBounds(), contentAlignment = Alignment.BottomCenter) {
+    Text(text, style = exact, color = color, textAlign = textAlign, modifier = Modifier.fillMaxWidth().wrapContentHeight(Alignment.Bottom, unbounded = true))
+  }
+}
+
+private data class Line(val status: String, val turn: TurnText?) {
+  /** Words arriving in the same turn update in place; a new turn or status fades in. */
+  val key
+    get() = Triple(status, turn?.heard, turn?.let { it.live || it.answer.isNotEmpty() })
+}
 
 @Composable
 private fun TurnWords(line: Line, captionOnly: Boolean) {
@@ -99,7 +140,10 @@ private fun TurnWords(line: Line, captionOnly: Boolean) {
     if (line.status.isNotEmpty() && (turn == null || turn.answer.isEmpty())) {
       Text(line.status, style = MaterialTheme.typography.titleLarge, color = Palette.Dim, textAlign = TextAlign.Center)
     }
-    if (turn != null && turn.answer.isNotEmpty()) {
+    if (turn != null && turn.live) {
+      val size = if (captionOnly) 26.sp else 34.sp
+      RollingText(turn.answer, if (captionOnly) 3 else 5, TextStyle(fontSize = size, lineHeight = size * 1.3f), if (captionOnly) Palette.Dim else Palette.Text, TextAlign.Center)
+    } else if (turn != null && turn.answer.isNotEmpty()) {
       val size = if (captionOnly) 26.sp else if (turn.answer.length > 160) 30.sp else 38.sp
       Text(
           turn.answer,

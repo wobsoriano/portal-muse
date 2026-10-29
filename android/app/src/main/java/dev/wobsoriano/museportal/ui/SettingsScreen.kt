@@ -57,6 +57,8 @@ interface SettingsActions {
 
   fun setKeepListening(on: Boolean)
 
+  fun setConversationMode(on: Boolean)
+
   fun requestOverlay()
 
   fun setVoice(name: String?, rate: Float)
@@ -94,6 +96,12 @@ fun SettingsScreen(state: MuseState, canOverlay: Boolean, avatar: AvatarLoad, av
                   "Listens for about 6 seconds for your reply, without “Hey Muse”.",
                   state.keepListening,
                   actions::setKeepListening)
+              Divider()
+              SwitchRow(
+                  "Conversation mode (experimental)",
+                  "“Hey Muse” starts a call: Muse answers in its own voice, with captions, and a tap cuts it off. End call hangs up. Falls back to a voice note when unavailable.",
+                  state.conversationMode,
+                  actions::setConversationMode)
               if (!canOverlay) {
                 Divider()
                 OverlayOffer(canOverlay, actions::requestOverlay, boxed = false)

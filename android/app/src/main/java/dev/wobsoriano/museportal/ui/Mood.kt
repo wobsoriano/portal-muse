@@ -1,6 +1,7 @@
 package dev.wobsoriano.museportal.ui
 
 import dev.wobsoriano.muse.Phase
+import dev.wobsoriano.muse.voice.CallPhase
 import dev.wobsoriano.museportal.CoreState
 import dev.wobsoriano.museportal.MuseState
 import dev.wobsoriano.museportal.ask.AskState
@@ -32,15 +33,29 @@ val MuseState.mood: Mood
       is AskState.Answered -> if (a.complete) restingMood else Mood.Thinking
       AskState.Idle,
       is AskState.Failed -> restingMood
+      is AskState.Calling ->
+          when (a.phase) {
+            CallPhase.Listening,
+            CallPhase.Interrupted -> Mood.Hearing
+            CallPhase.Talking -> Mood.Speaking
+            CallPhase.Connecting,
+            CallPhase.Thinking,
+            CallPhase.Ending -> Mood.Thinking
+          }
     }
   }
 
 private val MuseState.restingMood
   get() = if (online) Mood.Ready else Mood.Offline
 
-/** The voice level while recording, 0 otherwise. */
+/** The voice level while recording or in a call, 0 otherwise. */
 val MuseState.level: Float
-  get() = (ask as? AskState.Recording)?.level ?: 0f
+  get() =
+      when (val a = ask) {
+        is AskState.Recording -> a.level
+        is AskState.Calling -> a.level
+        else -> 0f
+      }
 
 /** The connection in plain words, for the top bar. */
 val MuseState.connectionLabel: String
@@ -61,7 +76,7 @@ val MuseState.connectionLabel: String
 /** The one line under the orb. */
 val MuseState.statusLine: String
   get() =
-      when (mood) {
+      (ask as? AskState.Calling)?.let { callLine(it.phase) } ?: when (mood) {
         Mood.Hearing -> "Listening…"
         Mood.Reply -> "Go ahead, I'm listening"
         Mood.Thinking -> "Thinking…"
@@ -71,6 +86,16 @@ val MuseState.statusLine: String
       }
 
 private const val TAP = "Tap Muse to ask"
+
+private fun callLine(phase: CallPhase): String =
+    when (phase) {
+      CallPhase.Connecting -> "Connecting…"
+      CallPhase.Listening -> "Listening…"
+      CallPhase.Thinking -> "Thinking…"
+      CallPhase.Talking -> ""
+      CallPhase.Interrupted -> "Go ahead, I'm listening"
+      CallPhase.Ending -> "Ending call…"
+    }
 
 private fun wakeLine(wake: WakeState): String =
     when (wake) {

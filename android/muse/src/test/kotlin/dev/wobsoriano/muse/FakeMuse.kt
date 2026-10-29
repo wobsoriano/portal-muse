@@ -57,6 +57,8 @@ class FakeMuse : AutoCloseable {
   private var chatCount = 0
   /** When set, stops each reply half way until released. */
   @Volatile var hold: CountDownLatch? = null
+  /** When set, answers the streams it claims in place of the VM. */
+  @Volatile internal var desk: Desk? = null
 
   val vms = LinkedBlockingQueue<FakeVm>()
   /** What went wrong on the VM side, which fails the test as t.Errorf does in Go. */
@@ -184,6 +186,16 @@ class FakeMuse : AutoCloseable {
   internal fun subscribed() = synchronized(lock) { subscribes++ }
 }
 
+/**
+ * A test's own end of some streams: every frame of a stream whose request it claims goes to [frame], on
+ * the VM's reader thread, and the test answers with [FakeVm.write].
+ */
+internal interface Desk {
+  fun claims(request: Frame): Boolean
+
+  fun frame(vm: FakeVm, f: Frame)
+}
+
 /** One POST /chat/stream as the VM saw it. */
 class Chat(val body: JsonObject, val headers: Map<String, String>, val chunks: Int, val inRequest: Boolean, val wavSha: String)
 
@@ -201,6 +213,7 @@ class FakeVm(private val f: FakeMuse, val query: String) {
   private var controlBuf = ByteArray(0)
   private var subscription = 0L
   private val uploads = HashMap<Long, Upload>()
+  private val desked = HashSet<Long>()
 
   val registers = LinkedBlockingQueue<JsonObject>()
   val results = LinkedBlockingQueue<JsonObject>()
@@ -276,6 +289,12 @@ class FakeVm(private val f: FakeMuse, val query: String) {
   fun message(m: JsonObject) = write(Frame(stream = control, kind = FrameKind.Body, data = encodeControl(m)))
 
   private fun onFrame(fr: Frame) {
+    val desk = f.desk
+    if (desk != null && (fr.stream in desked || fr.kind == FrameKind.Request && desk.claims(fr))) {
+      desked += fr.stream
+      desk.frame(this, fr)
+      return
+    }
     val up = uploads[fr.stream]
     when {
       fr.kind == FrameKind.Request && fr.path == CONTROL_PATH -> {

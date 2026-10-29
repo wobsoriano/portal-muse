@@ -47,6 +47,8 @@ class Checks(
     private val report: Report,
     /** Shows a prompt on screen, e.g. a countdown before the microphone step. */
     private val prompt: (String) -> Unit,
+    /** Steps to leave out (`--es skip talkover`). */
+    private val skip: Set<String> = emptySet(),
 ) {
   private val main = Handler(Looper.getMainLooper())
 
@@ -65,6 +67,8 @@ class Checks(
           "mic" to ::microphones,
           "backgroundMic" to ::backgroundMic,
           "vosk" to ::vosk,
+          "echo" to { echoCheck(context, report, prompt) },
+          "callaudio" to { callAudioCheck(context, report, prompt, skip) },
       )
 
   /** Runs every check, or only the one named [only] (`adb shell am start ... --es only directGatt`). */
@@ -526,7 +530,7 @@ class Checks(
 
   private companion object {
     /** Checks that only run when named with --es only. */
-    val ON_REQUEST = setOf("backgroundMic", "vosk")
+    val ON_REQUEST = setOf("backgroundMic", "vosk", "echo", "callaudio")
 
     val MUSE_SERVICE: UUID = UUID.fromString("7fdd3d1c-38ea-46cf-8b46-314ecf5f240c")
     val MUSE_RX: UUID = UUID.fromString("4d593029-28a2-4a6e-a1f0-3c2d5e8f9b01")

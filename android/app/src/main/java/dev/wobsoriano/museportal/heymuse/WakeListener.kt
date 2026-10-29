@@ -31,10 +31,19 @@ import org.vosk.LogLevel
 import org.vosk.Model
 import org.vosk.Recognizer
 
+/** What a wake turned into. */
+enum class WakeTurn {
+  /** A recording or a call already has the mic. */
+  Refused,
+  /** An ask whose question the listener records. */
+  Record,
+  /** A call, which opens a mic of its own once Muse picks up. */
+  Call,
+}
+
 /** What the listener needs from the app to turn a wake into an ask. */
 interface WakeHost {
-  /** Starts an ask whose question the listener records; false when one is already under way. */
-  fun wakeAsk(): Boolean
+  fun wakeAsk(): WakeTurn
 
   val shouldStopRecording: Boolean
 
@@ -355,13 +364,18 @@ class WakeListener(private val context: Context, private val host: WakeHost) {
     }
   }
 
-  /** Records the question on the mic that heard the wake, then lets go of it until the answer is spoken. */
+  /** Records the question on the mic that heard the wake, or hands the mic to a call, then lets go of it until the turn is over. */
   private fun wake(rec: AudioRecord, d: Decision.Wake) {
     Log.i(TAG, "wake: ${d.heard.joinToString(" ") { "${it.word}(${it.conf})" }}")
-    if (!host.wakeAsk()) return
-    val capture = Microphone.capture(rec, CHIME_SKIP_MS, { host.shouldStopRecording }, onLevel = host::level)
-    closeMic()
-    host.recorded(capture)
+    when (host.wakeAsk()) {
+      WakeTurn.Refused -> Unit
+      WakeTurn.Call -> closeMic()
+      WakeTurn.Record -> {
+        val capture = Microphone.capture(rec, CHIME_SKIP_MS, { host.shouldStopRecording }, onLevel = host::level)
+        closeMic()
+        host.recorded(capture)
+      }
+    }
   }
 
   private fun httpOpen(url: String): Download {

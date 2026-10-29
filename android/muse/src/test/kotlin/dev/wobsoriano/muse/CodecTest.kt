@@ -193,6 +193,31 @@ class CodecTest {
     }
   }
 
+  // The voice connection names its app in the upgrade query, as link_client.noise_url does.
+  @Test
+  fun noiseUrlAppId() {
+    for ((app, want) in
+        listOf(
+            "hatch-web" to "wss://host/v1/noise?vm_id=vm%201&app_id=hatch-web",
+            "1" to "wss://host/v1/noise?vm_id=vm%201&app_id=1",
+            "9223372036854775807" to "wss://host/v1/noise?vm_id=vm%201&app_id=9223372036854775807",
+            "007" to "wss://host/v1/noise?vm_id=vm%201&app_id=7",
+            "0" to "",
+            "-1" to "",
+            "+5" to "",
+            "9223372036854775808" to "",
+            "00000000000000000001" to "",
+            "1.0" to "",
+            "١٢" to "",
+            "hatch" to "",
+            "" to "",
+        )) {
+      val got = runCatching { noiseUrl("host", "vm 1", false, app) }
+      assertEquals("noiseUrl(app_id=$app)", want, got.getOrDefault(""))
+      assertEquals(want.isNotEmpty(), got.isSuccess)
+    }
+  }
+
   @Test
   fun apiRootIsHttps() {
     for ((v2, want) in listOf("" to "https://api.muse.ai", "https://api.example/" to "https://api.example", "http://api.example" to "", "api.example" to "")) {

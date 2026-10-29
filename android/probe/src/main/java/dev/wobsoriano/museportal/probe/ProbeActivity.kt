@@ -78,7 +78,8 @@ class ProbeActivity : ComponentActivity() {
     val report = Report { line -> main.post { lines += line } }
     thread(name = "probe") {
       Log.i(Report.TAG, "probe started")
-      Checks(this, report) { text -> main.post { banner.value = text } }.run(intent.getStringExtra("only"))
+      val skip = intent.getStringExtra("skip")?.split(',')?.map { it.trim() }?.toSet().orEmpty()
+      Checks(this, report, { text -> main.post { banner.value = text } }, skip).run(intent.getStringExtra("only"))
       val json = report.toJson()
       val files = listOfNotNull(filesDir, getExternalFilesDir(null)).map { File(it, "probe-report.json") }
       for (file in files) {

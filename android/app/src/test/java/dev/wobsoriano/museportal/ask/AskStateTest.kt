@@ -1,7 +1,13 @@
 package dev.wobsoriano.museportal.ask
 
 import dev.wobsoriano.muse.core.AskUpdate
+import dev.wobsoriano.muse.core.CallUpdate
 import dev.wobsoriano.muse.core.ReplyKind
+import dev.wobsoriano.muse.voice.CallEnd
+import dev.wobsoriano.muse.voice.CallPhase
+import dev.wobsoriano.muse.voice.CallView
+import dev.wobsoriano.muse.voice.Decline
+import dev.wobsoriano.muse.voice.OverReason
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -174,5 +180,159 @@ class AskStateTest {
     val closed = asked.next(AskInput.Dismissed)
     assertEquals(AskStep(AskState.Idle), closed)
     assertEquals(AskStep(AskState.Idle), closed.state.next(AskInput.Spoken()))
+  }
+
+  private fun phase(p: CallPhase, level: Float = 0f, id: String = "c1") = AskInput.Call(CallUpdate.Phase(id, CallView(p, level)))
+
+  private fun ended(end: CallEnd, id: String = "c1") = AskInput.Call(CallUpdate.Ended(id, end))
+
+  private fun calling(p: CallPhase, level: Float = 0f) = AskState.Calling("c1", p, level)
+
+  private val declined = CallEnd.Declined(Decline.Refused(403))
+
+  @Test
+  fun aCallWakeFromAnyRestingOrAnsweringStateStartsACall() {
+    val from =
+        listOf(
+            AskState.Idle,
+            AskState.Failed("no"),
+            AskState.Sending("a1"),
+            AskState.Heard("a1", "hi"),
+            AskState.Answered("a1", "hi", "Hello.", complete = true),
+            AskState.Answered("a1", "hi", "Hel", complete = false))
+    for (s in from) assertEquals(AskStep(AskState.Calling("c1"), AskEffect.StartCall("c1")), s.next(AskInput.WakeCall("c1")))
+  }
+
+  @Test
+  fun aWakeWhileTheMicIsTakenIsIgnored() {
+    for (s in listOf(AskState.Recording(0.2f), calling(CallPhase.Listening))) {
+      assertEquals(AskStep(s), s.next(AskInput.WakeCall("c2")))
+      assertEquals(AskStep(s), s.next(AskInput.Wake(listenerRecords = true)))
+    }
+  }
+
+  @Test
+  fun theMicIsHeldByARecordingOrACallOnly() {
+    assertEquals(
+        listOf(true, true, false, false, false),
+        listOf(AskState.Recording(), calling(CallPhase.Connecting), AskState.Idle, AskState.Sending("a1"), AskState.Failed("no")).map { it.holdsMic })
+  }
+
+  @Test
+  fun aCallIsInFlightFromConnectingToEnding() {
+    assertEquals(true, CallPhase.entries.all { calling(it).inFlight })
+  }
+
+  @Test
+  fun aCallKeepsItsCaptions() {
+    val view = CallView(CallPhase.Talking, 0.2f, heard = "hi", reply = "Hello.")
+    assertEquals(
+        AskStep(AskState.Calling("c1", CallPhase.Talking, 0.2f, heard = "hi", reply = "Hello.")),
+        calling(CallPhase.Listening).next(AskInput.Call(CallUpdate.Phase("c1", view))))
+  }
+
+  @Test
+  fun aCallChimesOnceWhenMuseFirstListens() {
+    val steps =
+        run(
+            AskInput.WakeCall("c1"),
+            phase(CallPhase.Listening, 0.1f),
+            phase(CallPhase.Talking),
+            phase(CallPhase.Listening, 0.3f),
+            phase(CallPhase.Thinking),
+        )
+    assertEquals(
+        listOf(
+            AskStep(calling(CallPhase.Connecting), AskEffect.StartCall("c1")),
+            AskStep(calling(CallPhase.Listening, 0.1f), AskEffect.CallReady),
+            AskStep(calling(CallPhase.Talking)),
+            AskStep(calling(CallPhase.Listening, 0.3f)),
+            AskStep(calling(CallPhase.Thinking)),
+        ),
+        steps)
+  }
+
+  @Test
+  fun aCallThatOpensWithMuseTalkingDoesNotChimeOverIt() {
+    assertEquals(AskStep(calling(CallPhase.Talking)), calling(CallPhase.Connecting).next(phase(CallPhase.Talking)))
+  }
+
+  @Test
+  fun anEndingCallStaysEndingWhateverItSaysNext() {
+    val ending = calling(CallPhase.Ending)
+    assertEquals(AskStep(ending), ending.next(phase(CallPhase.Talking)))
+    assertEquals(AskStep(ending), ending.next(AskInput.Dismissed))
+  }
+
+  @Test
+  fun aCallMuseWouldNotTakeFallsBackToAVoiceNote() {
+    assertEquals(AskStep(AskState.Recording(), AskEffect.FallBack), calling(CallPhase.Connecting).next(ended(declined)))
+  }
+
+  @Test
+  fun aDeclineAfterConnectingStartsNoRecording() {
+    assertEquals(AskStep(AskState.Idle), calling(CallPhase.Listening).next(ended(declined)))
+  }
+
+  @Test
+  fun aCallHungUpByTheUserEndsQuietlyHoweverItEnds() {
+    val ending = calling(CallPhase.Ending)
+    for (end in listOf(declined, CallEnd.Over(OverReason.HungUp), CallEnd.Over(OverReason.Failed("send failed")))) {
+      assertEquals(AskStep(AskState.Idle), ending.next(ended(end)))
+    }
+  }
+
+  @Test
+  fun aCallThatFailsShowsThatItDropped() {
+    assertEquals(AskStep(AskState.Failed("The call dropped")), calling(CallPhase.Talking).next(ended(CallEnd.Over(OverReason.Failed("x")))))
+  }
+
+  @Test
+  fun aCallThatEndsAnyOtherWayGoesIdle() {
+    for (reason in listOf(OverReason.RemoteStop, OverReason.RemoteEnd, OverReason.Idle, OverReason.TooLong, OverReason.HungUp)) {
+      assertEquals(AskStep(AskState.Idle), calling(CallPhase.Listening).next(ended(CallEnd.Over(reason, endAcked = true))))
+    }
+  }
+
+  @Test
+  fun aTapInterruptsMuseOnlyWhileItTalks() {
+    assertEquals(AskStep(calling(CallPhase.Talking), AskEffect.Interrupt), calling(CallPhase.Talking).next(AskInput.Tap))
+    for (p in CallPhase.entries - CallPhase.Talking) assertEquals(AskStep(calling(p)), calling(p).next(AskInput.Tap))
+  }
+
+  @Test
+  fun closingTheCardHangsUp() {
+    for (p in CallPhase.entries - CallPhase.Ending) {
+      assertEquals(AskStep(calling(CallPhase.Ending, 0.4f), AskEffect.HangUp), calling(p, 0.4f).next(AskInput.Dismissed))
+    }
+  }
+
+  @Test
+  fun aCallIgnoresTheAskFlowsInputs() {
+    val call = calling(CallPhase.Listening, 0.2f)
+    val inputs =
+        listOf(
+            AskInput.Level(0.9f),
+            AskInput.Sent("a1"),
+            AskInput.NotSent("no"),
+            reply(ReplyKind.Done, "Hi."),
+            AskInput.Spoken(keepListening = true),
+            AskInput.Expired,
+            AskInput.LeftApp)
+    for (input in inputs) assertEquals(AskStep(call), call.next(input))
+  }
+
+  @Test
+  fun anotherCallsUpdatesAreIgnored() {
+    val call = calling(CallPhase.Listening)
+    assertEquals(AskStep(call), call.next(phase(CallPhase.Talking, id = "c0")))
+    assertEquals(AskStep(call), call.next(ended(declined, id = "c0")))
+  }
+
+  @Test
+  fun updatesForACallThatIsOverChangeNothing() {
+    assertEquals(AskStep(AskState.Idle), AskState.Idle.next(phase(CallPhase.Talking)))
+    val recording = AskState.Recording()
+    assertEquals(AskStep(recording), recording.next(ended(declined)))
   }
 }

@@ -22,6 +22,7 @@ android {
   }
   buildFeatures { compose = true }
   sourceSets["main"].kotlin.srcDir("../app/src/main/java/dev/wobsoriano/museportal/ble/gatt")
+  sourceSets["main"].kotlin.srcDir("../app/src/main/java/dev/wobsoriano/museportal/audio/call")
 }
 
 dependencies {
@@ -29,6 +30,7 @@ dependencies {
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.compose.material3)
   implementation(libs.androidx.compose.ui)
+  implementation(project(":muse"))
   implementation(project(":wake"))
   implementation(libs.vosk.android)
 }

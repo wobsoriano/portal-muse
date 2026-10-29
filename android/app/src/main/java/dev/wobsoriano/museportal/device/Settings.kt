@@ -1,6 +1,7 @@
 package dev.wobsoriano.museportal.device
 
 import android.content.Context
+import dev.wobsoriano.muse.voice.Duplex
 import dev.wobsoriano.museportal.setup.SetupProgress
 
 /** The user's settings, in app-private preferences. The token never leaves this file except into the core's config. */
@@ -29,6 +30,16 @@ class Settings(context: Context) {
     get() = prefs.getBoolean(KEY_KEEP_LISTENING, false)
     set(value) = prefs.edit().putBoolean(KEY_KEEP_LISTENING, value).apply()
 
+  /** "Hey Muse" starts a realtime call with Muse instead of a voice note. Experimental. */
+  var conversationMode: Boolean
+    get() = prefs.getBoolean(KEY_CONVERSATION, false)
+    set(value) = prefs.edit().putBoolean(KEY_CONVERSATION, value).apply()
+
+  /** Half until a talk-over test shows the user's voice survives Muse's on the Portal. */
+  var duplex: Duplex
+    get() = prefs.getString(KEY_DUPLEX, null)?.let { s -> Duplex.entries.find { it.name == s } } ?: Duplex.Half
+    set(value) = prefs.edit().putString(KEY_DUPLEX, value.name).apply()
+
   var setup: SetupProgress
     get() = prefs.getString(KEY_SETUP, null)?.let { s -> SetupProgress.entries.find { it.name == s } } ?: SetupProgress.NotStarted
     set(value) = prefs.edit().putString(KEY_SETUP, value.name).apply()
@@ -48,6 +59,8 @@ class Settings(context: Context) {
     const val KEY_TOKEN = "sdkToken"
     const val KEY_WAKE = "wakeEnabled"
     const val KEY_KEEP_LISTENING = "keepListening"
+    const val KEY_CONVERSATION = "conversationMode"
+    const val KEY_DUPLEX = "duplex"
     const val KEY_SETUP = "setup"
     const val KEY_VOICE = "voice"
     const val KEY_RATE = "speechRate"
